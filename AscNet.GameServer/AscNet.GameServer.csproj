@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <NoWarn>$(NoWarn);CS8785;AD0001</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Remove="Handlers\CommunicationModule.cs~RF42bcb29.TMP" />
+    <None Remove="Handlers\SignInModule.cs~RF3f1e071.TMP" />
+    <None Remove="Handlers\SignInModule.cs~RF46194f0.TMP" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MessagePack" Version="3.1.7" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AscNet.Common\AscNet.Common.csproj" />
+    <ProjectReference Include="..\AscNet.Logging\AscNet.Logging.csproj" />
+  </ItemGroup>
+
+</Project>

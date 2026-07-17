@@ -1,0 +1,3 @@
+Id	NpcId	Name	Desc	RecommendElement[1]	Icon	LiHuiPath	Priority	InitQuality	CarryCharacterType	ChipItemId	ChipNeedCount	DefaultLock	GoodsDesc	GoodsWorldDesc	DecomposeItemId[1]	DecomposeItemCount[1]	RecommendCharacterId	NoCameraSwitchDuringTransformation	PartnerType	AvaliableTimeId
+0	0	sample	sample	0	sample	sample	0	0	0	0	0	0			0	0	0	0	0	0
+0	0	sample	sample	0	sample	sample	0	0	0	0	0	0			0	0	0	0	0	0

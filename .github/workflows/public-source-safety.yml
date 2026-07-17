@@ -1,0 +1,44 @@
+name: Public source-available 4.6 safety
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-build-test:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the single-root snapshot
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 1
+
+      - name: Confirm repository remains standalone
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $repository = gh api "repos/${{ github.repository }}" | ConvertFrom-Json
+          if ($repository.fork) {
+            throw 'The sanitized snapshot must remain a standalone repository.'
+          }
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Verify source publication boundary
+        shell: pwsh
+        run: .\tools\verify-source-snapshot.ps1
+
+      - name: Build Release source
+        shell: pwsh
+        run: dotnet build .\AscNet\AscNet.csproj -c Release
+
+      - name: Run sanitized 4.6 checks
+        shell: pwsh
+        run: dotnet run --project .\AscNet.Test\AscNet.Test.csproj -c Release

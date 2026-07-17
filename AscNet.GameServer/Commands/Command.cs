@@ -1,0 +1,212 @@
+﻿using System;
+using System.Reflection;
+using System.Text.RegularExpressions;
+using AscNet.Logging;
+using Newtonsoft.Json;
+
+namespace AscNet.GameServer.Commands
+{
+    public abstract class Command
+    {
+        protected Session session;
+        protected string[] args;
+
+        public abstract string Help { get; }
+
+        /// <summary>
+        /// Make sure to handle me well...
+        /// </summary>
+        /// <param name="session"></param>
+        /// <param name="args"></param>
+        /// <exception cref="ArgumentException"></exception>
+        public Command(Session session, string[] args, bool validate = true)
+        {
+            this.session = session;
+            this.args = args;
+
+            string? ret = Validate();
+            if (ret is not null && validate)
+                throw new ArgumentException(ret);
+        }
+
+        public string? Validate()
+        {
+            List<PropertyInfo> argsProperties = GetType().GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance).Where(x => x.GetCustomAttribute(typeof(ArgumentAttribute)) is not null).ToList();
+            if (argsProperties.Where(x => (((ArgumentAttribute)x.GetCustomAttribute(typeof(ArgumentAttribute))!).Flags & ArgumentFlags.Optional) != ArgumentFlags.Optional).Count() > args.Length)
+                return "参数数量不正确！";
+
+            foreach (var argProp in argsProperties)
+            {
+                ArgumentAttribute attr = (ArgumentAttribute)argProp.GetCustomAttribute(typeof(ArgumentAttribute))!;
+                if (attr.Position + 1 > args.Length && (attr.Flags & ArgumentFlags.Optional) != ArgumentFlags.Optional)
+                    return $"参数 {argProp.Name} 为必填！";
+                else if (attr.Position + 1 > args.Length)
+                    return null;
+
+                if (!attr.Pattern.IsMatch(args[attr.Position]))
+                    return $"参数 {argProp.Name} 不合法！";
+
+                argProp.SetValue(this, args[attr.Position]);
+            }
+            return null;
+        }
+
+        public abstract void Execute();
+    }
+
+    [AttributeUsage(AttributeTargets.Property)]
+    public class ArgumentAttribute : Attribute
+    {
+        public int Position { get; }
+        public Regex Pattern { get; set; }
+        public string? Description { get; }
+        public ArgumentFlags Flags { get; }
+
+        public ArgumentAttribute(int position, string pattern, string? description = null, ArgumentFlags flags = ArgumentFlags.None)
+        {
+            Position = position;
+
+            if ((flags & ArgumentFlags.IgnoreCase) != ArgumentFlags.IgnoreCase)
+                Pattern = new(pattern);
+            else
+                Pattern = new(pattern, RegexOptions.IgnoreCase);
+
+            Description = description;
+            Flags = flags;
+        }
+    }
+
+    public enum ArgumentFlags
+    {
+        None = 0,
+        Optional = 1,
+        IgnoreCase = 2
+    }
+
+    [AttributeUsage(AttributeTargets.Class)]
+    public class CommandNameAttribute : Attribute
+    {
+        public string Name { get; }
+
+        public CommandNameAttribute(string name)
+        {
+            Name = name;
+        }
+    }
+
+    [CommandName("help")]
+    internal class HelpCommand : Command
+    {
+        public HelpCommand(Session session, string[] args, bool validate = true) : base(session, args, validate) { }
+
+        public override string Help => "显示所有可用命令及其用法。";
+
+        public override void Execute()
+        {
+            List<string> lines =
+            [
+                "可用命令",
+                "直接输入下列内容即可，尖括号是必填，方括号是可选。",
+                string.Empty
+            ];
+
+            foreach (var command in CommandFactory.commands.Keys.OrderBy(x => x, StringComparer.Ordinal))
+            {
+                Command? cmd = CommandFactory.CreateCommand(command, session, args, false);
+                if (cmd is not null)
+                {
+                    List<PropertyInfo> argsProperties = cmd.GetType()
+                        .GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                        .Where(x => x.GetCustomAttribute(typeof(ArgumentAttribute)) is not null)
+                        .OrderBy(x => ((ArgumentAttribute)x.GetCustomAttribute(typeof(ArgumentAttribute))!).Position)
+                        .ToList();
+
+                    string usage = string.Join(" ", argsProperties.Select(x =>
+                    {
+                        ArgumentAttribute attr = (ArgumentAttribute)x.GetCustomAttribute(typeof(ArgumentAttribute))!;
+                        return (attr.Flags & ArgumentFlags.Optional) == ArgumentFlags.Optional
+                            ? $"[{x.Name}]"
+                            : $"<{x.Name}>";
+                    }));
+
+                    string display = $"/{command}{(string.IsNullOrEmpty(usage) ? string.Empty : $" {usage}")}";
+                    lines.Add(display);
+                    lines.Add($"  {cmd.Help}");
+
+                    if (argsProperties.Count > 0)
+                    {
+                        string parameterSummary = string.Join("；", argsProperties.Select(argProp =>
+                        {
+                            ArgumentAttribute attr = (ArgumentAttribute)argProp.GetCustomAttribute(typeof(ArgumentAttribute))!;
+                            string requirement = (attr.Flags & ArgumentFlags.Optional) == ArgumentFlags.Optional ? "可选" : "必填";
+                            string description = string.IsNullOrWhiteSpace(attr.Description) ? "无说明" : attr.Description!;
+                            return $"{argProp.Name}（{requirement}）：{description}";
+                        }));
+                        lines.Add($"  参数: {parameterSummary}");
+                    }
+
+                    string? example = command switch
+                    {
+                        "help" => "/help",
+                        "bc" => "/bc 30000",
+                        "level" => "/level max",
+                        "item" => "/item add 3 99999",
+                        "stage" => "/stage all",
+                        "save" => "/save",
+                        "character" => "/character add all",
+                        "coating" => "/coating unlock all",
+                        "equip" => "/equip add all",
+                        _ => null
+                    };
+
+                    if (!string.IsNullOrEmpty(example))
+                        lines.Add($"  示例: {example}");
+
+                    lines.Add(string.Empty);
+                }
+            }
+
+            throw new CommandMessageCallbackException(string.Join('\n', lines));
+        }
+    }
+
+    public static class CommandFactory
+    {
+        public static readonly Dictionary<string, Type> commands = new();
+
+        internal static readonly Logger log = new(typeof(CommandFactory), LogLevel.DEBUG, LogLevel.DEBUG);
+        
+        public static void LoadCommands()
+        {
+            log.LogLevelColor[LogLevel.INFO] = ConsoleColor.White;
+            log.Info("Loading commands...");
+
+            IEnumerable<Type> classes = from t in Assembly.GetExecutingAssembly().GetTypes()
+                                        where t.IsClass && t.GetCustomAttribute<CommandNameAttribute>() is not null
+                                        select t;
+
+            foreach (var command in classes)
+            {
+                CommandNameAttribute nameAttr = command.GetCustomAttribute<CommandNameAttribute>()!;
+                commands.Add(nameAttr.Name, command);
+            }
+
+            log.Info("Finished loading commands");
+        }
+
+        public static Command? CreateCommand(string name, Session session, string[] args, bool validate = true)
+        {
+            Type? command = commands.GetValueOrDefault(name);
+            if (command is null)
+                return null;
+
+            return (Command)Activator.CreateInstance(command, new object[] { session, args, validate })!;
+        }
+    }
+
+    public class CommandMessageCallbackException : Exception
+    {
+        public CommandMessageCallbackException(string message)
+            : base(message) { }
+    }
+}
